@@ -1467,3 +1467,31 @@ class VoxelBasedPointSampler(object):
         repr_str += ' ' * indent + 'prev_voxel_generator=\n'
         repr_str += f'{_auto_indent(repr(self.prev_voxel_generator), 8)})'
         return repr_str
+
+
+@PIPELINES.register_module()
+class ExtractImages(object):
+
+    def __call__(self, results):
+        
+        cams = ['CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT',
+             'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT']
+        idx = 5
+        img = results['img_inputs']
+        img = img[0][idx]
+        assert len(img.shape) == 3
+        results['img'] = img
+        results['img_fields'] = ['img']
+        results['scale_factor'] = np.array([1])
+        results['img_shape'] = (900, 1600, 3)
+        results['ori_shape'] = (900, 1600, 3)
+        # results['img_shape'] = (256, 704, 3)
+        # results['ori_shape'] = (256, 704, 3)
+        results['img_norm_cfg'] = dict(mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
+        results['ori_filename'] = results['img_info'][cams[idx]]['data_path'].split('/')[-1]
+        return results
+
+    def __repr__(self):
+        """str: Return a string that describes the module."""
+        repr_str = self.__class__.__name__
+        return repr_str

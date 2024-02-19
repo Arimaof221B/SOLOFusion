@@ -14,7 +14,7 @@ from .transforms_3d import (BackgroundPointsFilter, GlobalAlignment,
                             ObjectRangeFilter, ObjectSample, PointSample,
                             PointShuffle, PointsRangeFilter,
                             RandomDropPointsColor, RandomFlip3D,
-                            RandomJitterPoints, VoxelBasedPointSampler)
+                            RandomJitterPoints, VoxelBasedPointSampler, ExtractImages)
 
 __all__ = [
     'ObjectSample', 'RandomFlip3D', 'ObjectNoise', 'GlobalRotScaleTrans',
@@ -27,5 +27,5 @@ __all__ = [
     'VoxelBasedPointSampler', 'GlobalAlignment', 'IndoorPatchPointSample',
     'LoadImageFromFileMono3D', 'ObjectNameFilter', 'RandomDropPointsColor',
     'RandomJitterPoints', 'LoadMultiViewImageFromFiles_BEVDet',
-    'PointToMultiViewDepth'
+    'PointToMultiViewDepth', 'ExtractImages'
 ]
