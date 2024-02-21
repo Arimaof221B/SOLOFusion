@@ -17,6 +17,524 @@ from .custom_3d import Custom3DDataset
 from .pipelines import Compose
 from ..utils import nuscenes_get_rt_matrix
 
+import os
+import time
+import json
+from pyquaternion import Quaternion
+from typing import List, Dict, Tuple, Callable
+from nuscenes.eval.detection.evaluate import DetectionEval
+from nuscenes import NuScenes
+from nuscenes.eval.common.config import config_factory
+from nuscenes.eval.common.data_classes import EvalBoxes
+from nuscenes.eval.common.loaders import load_prediction, load_gt, add_center_dist, filter_eval_boxes
+from nuscenes.eval.detection.algo import calc_ap, calc_tp
+from nuscenes.eval.detection.constants import TP_METRICS
+from nuscenes.eval.detection.data_classes import DetectionConfig, DetectionMetrics, DetectionBox, \
+    DetectionMetricDataList, DetectionMetricData
+from nuscenes.eval.common.utils import center_distance, scale_iou, yaw_diff, velocity_l2, attr_acc, cummean
+from nuscenes.eval.detection.render import summary_plot, class_pr_curve, class_tp_curve, dist_pr_curve, visualize_sample
+
+def add_points_per_box(points_per_box_file_path, gt_boxes):
+    import pickle
+    with open(points_per_box_file_path, 'rb') as f:
+        points_per_box = pickle.load(f)
+    assert len(points_per_box) == len(gt_boxes)
+    for sample_token in gt_boxes.sample_tokens:
+        # print(len(points_per_box[sample_token]['points_per_box_lidar']), len(gt_boxes[sample_token]))
+        assert len(points_per_box[sample_token]['points_per_box_lidar']) == len(gt_boxes[sample_token])
+        for i, box in enumerate(gt_boxes[sample_token]):
+            box.points = {'points_per_box_lidar': points_per_box[sample_token]['points_per_box_lidar'][i], \
+                'points_per_box_global': points_per_box[sample_token]['points_per_box_global'][i]}
+    return gt_boxes
+
+def load_prediction(result_path: str, max_boxes_per_sample: int, box_cls, verbose: bool = False) \
+        -> Tuple[EvalBoxes, Dict]:
+    """
+    Loads object predictions from file.
+    :param result_path: Path to the .json result file provided by the user.
+    :param max_boxes_per_sample: Maximim number of boxes allowed per sample.
+    :param box_cls: Type of box to load, e.g. DetectionBox or TrackingBox.
+    :param verbose: Whether to print messages to stdout.
+    :return: The deserialized results and meta data.
+    """
+
+    # Load from file and check that the format is correct.
+    with open(result_path) as f:
+        data = json.load(f)
+    assert 'results' in data, 'Error: No field `results` in result file. Please note that the result format changed.' \
+                              'See https://www.nuscenes.org/object-detection for more information.'
+
+    # Deserialize results and get meta data.
+    all_results = EvalBoxes.deserialize(data['results'], box_cls)
+    # meta = data['meta']
+    meta = None
+    if verbose:
+        print("Loaded results from {}. Found detections for {} samples."
+              .format(result_path, len(all_results.sample_tokens)))
+
+    # Check that each sample has no more than x predicted boxes.
+    for sample_token in all_results.sample_tokens:
+        assert len(all_results.boxes[sample_token]) <= max_boxes_per_sample, \
+            "Error: Only <= %d boxes per sample allowed!" % max_boxes_per_sample
+
+    return all_results, meta
+
+# def load_gt(nusc: NuScenes, eval_split: str, box_cls, verbose: bool = False, tokens = None) -> EvalBoxes:
+#     """
+#     Loads ground truth boxes from DB.
+#     :param nusc: A NuScenes instance.
+#     :param eval_split: The evaluation split for which we load GT boxes.
+#     :param box_cls: Type of box to load, e.g. DetectionBox or TrackingBox.
+#     :param verbose: Whether to print messages to stdout.
+#     :return: The GT boxes.
+#     """
+    
+    
+#     # Init.
+#     if box_cls == DetectionBox:
+#         attribute_map = {a['token']: a['name'] for a in nusc.attribute}
+
+#     if verbose:
+#         print('Loading annotations for {} split from nuScenes version: {}'.format(eval_split, nusc.version))
+#     # Read out all sample_tokens in DB.
+#     sample_tokens_all = [s['token'] for s in nusc.sample]
+#     assert len(sample_tokens_all) > 0, "Error: Database has no samples!"
+
+#     # Only keep samples from this split.
+#     splits = create_splits_scenes()
+
+#     # Check compatibility of split with nusc_version.
+#     version = nusc.version
+#     if eval_split in {'train', 'val', 'train_detect', 'train_track'}:
+#         assert version.endswith('trainval'), \
+#             'Error: Requested split {} which is not compatible with NuScenes version {}'.format(eval_split, version)
+#     elif eval_split in {'mini_train', 'mini_val'}:
+#         assert version.endswith('mini'), \
+#             'Error: Requested split {} which is not compatible with NuScenes version {}'.format(eval_split, version)
+#     elif eval_split == 'test':
+#         assert version.endswith('test'), \
+#             'Error: Requested split {} which is not compatible with NuScenes version {}'.format(eval_split, version)
+#     else:
+#         raise ValueError('Error: Requested split {} which this function cannot map to the correct NuScenes version.'
+#                          .format(eval_split))
+
+#     if eval_split == 'test':
+#         # Check that you aren't trying to cheat :).
+#         assert len(nusc.sample_annotation) > 0, \
+#             'Error: You are trying to evaluate on the test set but you do not have the annotations!'
+
+#     sample_tokens = []
+#     if tokens is not None:
+#         sample_tokens_all = tokens
+#     for sample_token in sample_tokens_all:
+#         scene_token = nusc.get('sample', sample_token)['scene_token']
+#         scene_record = nusc.get('scene', scene_token)
+#         if scene_record['name'] in splits[eval_split]:
+#             sample_tokens.append(sample_token)
+
+#     all_annotations = EvalBoxes()
+
+#     # Load annotations and filter predictions and annotations.
+#     tracking_id_set = set()
+#     for sample_token in tqdm.tqdm(sample_tokens, leave=verbose):
+
+#         sample = nusc.get('sample', sample_token)
+#         sample_annotation_tokens = sample['anns']
+
+#         sample_boxes = []
+#         for sample_annotation_token in sample_annotation_tokens:
+
+#             sample_annotation = nusc.get('sample_annotation', sample_annotation_token)
+#             if box_cls == DetectionBox:
+#                 # Get label name in detection task and filter unused labels.
+#                 detection_name = category_to_detection_name(sample_annotation['category_name'])
+#                 if detection_name is None:
+#                     continue
+
+#                 # Get attribute_name.
+#                 attr_tokens = sample_annotation['attribute_tokens']
+#                 attr_count = len(attr_tokens)
+#                 if attr_count == 0:
+#                     attribute_name = ''
+#                 elif attr_count == 1:
+#                     attribute_name = attribute_map[attr_tokens[0]]
+#                 else:
+#                     raise Exception('Error: GT annotations must not have more than one attribute!')
+
+#                 sample_boxes.append(
+#                     box_cls(
+#                         sample_token=sample_token,
+#                         translation=sample_annotation['translation'],
+#                         size=sample_annotation['size'],
+#                         rotation=sample_annotation['rotation'],
+#                         velocity=nusc.box_velocity(sample_annotation['token'])[:2],
+#                         num_pts=sample_annotation['num_lidar_pts'] + sample_annotation['num_radar_pts'],
+#                         detection_name=detection_name,
+#                         detection_score=-1.0,  # GT samples do not have a score.
+#                         attribute_name=attribute_name
+#                     )
+#                 )
+#             elif box_cls == TrackingBox:
+#                 # Use nuScenes token as tracking id.
+#                 tracking_id = sample_annotation['instance_token']
+#                 tracking_id_set.add(tracking_id)
+
+#                 # Get label name in detection task and filter unused labels.
+#                 # Import locally to avoid errors when motmetrics package is not installed.
+#                 from nuscenes.eval.tracking.utils import category_to_tracking_name
+#                 tracking_name = category_to_tracking_name(sample_annotation['category_name'])
+#                 if tracking_name is None:
+#                     continue
+
+#                 sample_boxes.append(
+#                     box_cls(
+#                         sample_token=sample_token,
+#                         translation=sample_annotation['translation'],
+#                         size=sample_annotation['size'],
+#                         rotation=sample_annotation['rotation'],
+#                         velocity=nusc.box_velocity(sample_annotation['token'])[:2],
+#                         num_pts=sample_annotation['num_lidar_pts'] + sample_annotation['num_radar_pts'],
+#                         tracking_id=tracking_id,
+#                         tracking_name=tracking_name,
+#                         tracking_score=-1.0  # GT samples do not have a score.
+#                     )
+#                 )
+#             else:
+#                 raise NotImplementedError('Error: Invalid box_cls %s!' % box_cls)
+
+#         all_annotations.add_boxes(sample_token, sample_boxes)
+
+#     if verbose:
+#         print("Loaded ground truth annotations for {} samples.".format(len(all_annotations.sample_tokens)))
+
+#     return all_annotations
+
+def filter_eval_boxes_by_tokens(
+                      eval_boxes: EvalBoxes,
+                      tokens,
+                      verbose: bool = False) -> EvalBoxes:
+    # Retrieve box type for detectipn/tracking boxes.
+    all_annotations = EvalBoxes()
+
+    for sample_token, sample_boxes in eval_boxes.boxes.items():
+        if sample_token in tokens:
+            all_annotations.add_boxes(sample_token, sample_boxes)
+
+    return all_annotations
+
+
+class NuScenesEval(DetectionEval):
+    def __init__(self,
+                 nusc: NuScenes,
+                 config: DetectionConfig,
+                 result_path: str,
+                 eval_set: str,
+                 output_dir: str = None,
+                 verbose: bool = True):
+        """
+        Initialize a DetectionEval object.
+        :param nusc: A NuScenes object.
+        :param config: A DetectionConfig object.
+        :param result_path: Path of the nuScenes JSON result file.
+        :param eval_set: The dataset split to evaluate on, e.g. train, val or test.
+        :param output_dir: Folder to save plots and results to.
+        :param verbose: Whether to print to stdout.
+        """
+        self.nusc = nusc
+        self.result_path = result_path
+        self.eval_set = eval_set
+        self.output_dir = output_dir
+        self.verbose = verbose
+        self.cfg = config
+
+        # Check result file exists.
+        assert os.path.exists(result_path), 'Error: The result file does not exist!'
+
+        # Make dirs.
+        self.plot_dir = os.path.join(self.output_dir, 'plots')
+        if not os.path.isdir(self.output_dir):
+            os.makedirs(self.output_dir)
+        if not os.path.isdir(self.plot_dir):
+            os.makedirs(self.plot_dir)
+
+        # Load data.
+        if verbose:
+            print('Initializing nuScenes detection evaluation')
+        
+        tokens = ['e261f474caa34797b0759aa2ca8a576d', '3947c3c1848e46c3849a1e178e2e728b', 'c0e18beded2d45d29662c2129503d4f7', 'c3286d413f524369ac040fbcd0b0e9b6', 'e7683144f74449309873faf2cb7e76c8', 'a4fa9d49433944d893b977da960fc458', 'd55a20a3225b4e258cbba4dd9e1b597f', '1a0f8e5b0cc248cd832716486455a257', 'f9b825f4020e4da8b6a182160e0b0705', '77d239a5f93b49a38ec0a6185c87147d', 'fdb723ef23d64b47aead300ed1d573f7', '6e49bfd9f21447858938b77180bcb6b8', '4c5a8356ea1741548238807ba41235d3', 'e69a14f90e684e0c8dbcee8336e837ad', 'a77fe48ab6e44959860a1a2b44f7be5e', '160faaad600249d7ab8f95ee44648e6f']
+        
+        self.pred_boxes, self.meta = load_prediction(self.result_path, self.cfg.max_boxes_per_sample, DetectionBox,
+                                                     verbose=verbose)
+        # self.gt_boxes = load_gt(self.nusc, self.eval_set, DetectionBox, verbose=verbose, tokens=self.pred_boxes.sample_tokens)
+        self.gt_boxes = load_gt(self.nusc, self.eval_set, DetectionBox, verbose=verbose)
+
+        # Add center distances.
+        self.pred_boxes = add_center_dist(nusc, self.pred_boxes)
+        self.gt_boxes = add_center_dist(nusc, self.gt_boxes)
+        self.gt_boxes = add_points_per_box('/media/msc-auto/HDD/dataset/nuscenes/SOLOFusion/points_per_box.pkl', self.gt_boxes)
+        self.gt_boxes = filter_eval_boxes_by_tokens(self.gt_boxes, tokens=tokens)
+        self.pred_boxes = filter_eval_boxes_by_tokens(self.pred_boxes, tokens=tokens)
+        
+        print(self.pred_boxes.sample_tokens)
+
+        assert set(self.pred_boxes.sample_tokens) == set(self.gt_boxes.sample_tokens), \
+            "Samples in split doesn't match samples in predictions."
+
+        # Filter boxes (distance, points per box, etc.).
+        if verbose:
+            print('Filtering predictions')
+        self.pred_boxes = filter_eval_boxes(nusc, self.pred_boxes, self.cfg.class_range, verbose=verbose)
+        if verbose:
+            print('Filtering ground truth annotations')
+        self.gt_boxes = filter_eval_boxes(nusc, self.gt_boxes, self.cfg.class_range, verbose=verbose)
+
+        self.sample_tokens = self.gt_boxes.sample_tokens
+
+    def evaluate(self) -> Tuple[DetectionMetrics, DetectionMetricDataList]:
+        """
+        Performs the actual evaluation.
+        :return: A tuple of high-level and the raw metric data.
+        """
+        start_time = time.time()
+
+        # -----------------------------------
+        # Step 1: Accumulate metric data for all classes and distance thresholds.
+        # -----------------------------------
+        if self.verbose:
+            print('Accumulating metric data...')
+        metric_data_list = DetectionMetricDataList()
+
+        num_cars = 0
+        num_1m_10d = 0
+
+
+        for class_name in self.cfg.class_names:
+            for dist_th in self.cfg.dist_ths:
+                md, extra_data = accumulate(self.gt_boxes, self.pred_boxes, class_name, self.cfg.dist_fcn_callable, dist_th)
+
+                print("X" * 30)
+                print(class_name, dist_th, len(extra_data['add_dist']), extra_data['1m_1d'])
+                print("Y" * 30)
+                # if dist_th == 4.0 and class_name == 'car':
+                #     trans_err = md.trans_err
+                #     orient_err = md.orient_err
+                #     num_cars += len(trans_err)
+                #     num_1m_10d += ((trans_err < 1) & (orient_err < 10)).sum()
+                #     print(len(add_dist))
+                    # add_dist = md.add_dist
+                    # print("K" * 30)
+                    # print(add_dist)
+                metric_data_list.set(class_name, dist_th, md)
+
+        # -----------------------------------
+        # Step 2: Calculate metrics from the data.
+        # -----------------------------------
+        if self.verbose:
+            print('Calculating metrics...')
+        metrics = DetectionMetrics(self.cfg)
+        for class_name in self.cfg.class_names:
+            # Compute APs.
+            for dist_th in self.cfg.dist_ths:
+                metric_data = metric_data_list[(class_name, dist_th)]
+                ap = calc_ap(metric_data, self.cfg.min_recall, self.cfg.min_precision)
+                metrics.add_label_ap(class_name, dist_th, ap)
+
+            # Compute TP metrics.
+            for metric_name in TP_METRICS:
+                metric_data = metric_data_list[(class_name, self.cfg.dist_th_tp)]
+                if class_name in ['traffic_cone'] and metric_name in ['attr_err', 'vel_err', 'orient_err']:
+                    tp = np.nan
+                elif class_name in ['barrier'] and metric_name in ['attr_err', 'vel_err']:
+                    tp = np.nan
+                else:
+                    tp = calc_tp(metric_data, self.cfg.min_recall, metric_name)
+                metrics.add_label_tp(class_name, metric_name, tp)
+
+        # Compute evaluation time.
+        metrics.add_runtime(time.time() - start_time)
+
+        return metrics, metric_data_list
+
+def cal_add_dist(gt_box, pred_box):
+    RT_gt = np.eye(4)
+    RT_gt[:3, 3] = gt_box.translation
+    RT_gt[:3, :3] = Quaternion(gt_box.rotation).rotation_matrix
+    RT_pred = np.eye(4)
+    RT_pred[:3, 3] = pred_box.translation
+    RT_pred[:3, :3] = Quaternion(pred_box.rotation).rotation_matrix
+    gt_points = gt_box.points['points_per_box_global']
+    gt_points_4d = np.concatenate((gt_points, np.ones_like(gt_points[:, :1])), axis=-1)
+    pred_points = gt_points_4d @ (RT_pred @ np.linalg.inv(RT_gt)).T[:, :3]
+    # print(gt_points.shape)
+    assert gt_points.shape[0] > 0
+    return np.linalg.norm(gt_points - pred_points, axis=1).mean()
+
+
+def accumulate(gt_boxes: EvalBoxes,
+               pred_boxes: EvalBoxes,
+               class_name: str,
+               dist_fcn: Callable,
+               dist_th: float,
+               verbose: bool = False) -> DetectionMetricData:
+    """
+    Average Precision over predefined different recall thresholds for a single distance threshold.
+    The recall/conf thresholds and other raw metrics will be used in secondary metrics.
+    :param gt_boxes: Maps every sample_token to a list of its sample_annotations.
+    :param pred_boxes: Maps every sample_token to a list of its sample_results.
+    :param class_name: Class to compute AP on.
+    :param dist_fcn: Distance function used to match detections and ground truths.
+    :param dist_th: Distance threshold for a match.
+    :param verbose: If true, print debug messages.
+    :return: (average_prec, metrics). The average precision value and raw data for a number of metrics.
+    """
+    # ---------------------------------------------
+    # Organize input and initialize accumulators.
+    # ---------------------------------------------
+
+    # Count the positives.
+    npos = len([1 for gt_box in gt_boxes.all if gt_box.detection_name == class_name])
+    if verbose:
+        print("Found {} GT of class {} out of {} total across {} samples.".
+              format(npos, class_name, len(gt_boxes.all), len(gt_boxes.sample_tokens)))
+
+    # For missing classes in the GT, return a data structure corresponding to no predictions.
+    if npos == 0:
+        return DetectionMetricData.no_predictions()
+
+    # Organize the predictions in a single list.
+    pred_boxes_list = [box for box in pred_boxes.all if box.detection_name == class_name]
+    pred_confs = [box.detection_score for box in pred_boxes_list]
+
+    if verbose:
+        print("Found {} PRED of class {} out of {} total across {} samples.".
+              format(len(pred_confs), class_name, len(pred_boxes.all), len(pred_boxes.sample_tokens)))
+
+    # Sort by confidence.
+    sortind = [i for (v, i) in sorted((v, i) for (i, v) in enumerate(pred_confs))][::-1]
+
+    # Do the actual matching.
+    tp = []  # Accumulator of true positives.
+    fp = []  # Accumulator of false positives.
+    conf = []  # Accumulator of confidences.
+
+    # match_data holds the extra metrics we calculate for each match.
+    match_data = {'trans_err': [],
+                'vel_err': [],
+                'scale_err': [],
+                'orient_err': [],
+                'attr_err': [],
+                'conf': []}
+
+    extra_data = {
+        'add_dist': [], 
+        '1m_1d': 0, 
+    }
+    
+    # ---------------------------------------------
+    # Match and accumulate match data.
+    # ---------------------------------------------
+
+    taken = set()  # Initially no gt bounding box is matched.
+    for ind in sortind:
+        pred_box = pred_boxes_list[ind]
+        min_dist = np.inf
+        match_gt_idx = None
+
+        for gt_idx, gt_box in enumerate(gt_boxes[pred_box.sample_token]):
+
+            # Find closest match among ground truth boxes
+            if gt_box.detection_name == class_name and not (pred_box.sample_token, gt_idx) in taken:
+                this_distance = dist_fcn(gt_box, pred_box)
+                if this_distance < min_dist:
+                    min_dist = this_distance
+                    match_gt_idx = gt_idx
+
+        # If the closest match is close enough according to threshold we have a match!
+        is_match = min_dist < dist_th
+
+        if is_match:
+            taken.add((pred_box.sample_token, match_gt_idx))
+
+            #  Update tp, fp and confs.
+            tp.append(1)
+            fp.append(0)
+            conf.append(pred_box.detection_score)
+
+            # Since it is a match, update match data also.
+            gt_box_match = gt_boxes[pred_box.sample_token][match_gt_idx]
+
+            match_data['trans_err'].append(center_distance(gt_box_match, pred_box))
+            match_data['vel_err'].append(velocity_l2(gt_box_match, pred_box))
+            match_data['scale_err'].append(1 - scale_iou(gt_box_match, pred_box))
+
+            # Barrier orientation is only determined up to 180 degree. (For cones orientation is discarded later)
+            period = np.pi if class_name == 'barrier' else 2 * np.pi
+            match_data['orient_err'].append(yaw_diff(gt_box_match, pred_box, period=period))
+
+            match_data['attr_err'].append(1 - attr_acc(gt_box_match, pred_box))
+            match_data['conf'].append(pred_box.detection_score)
+            if dist_th == 4.0 and class_name == 'car': 
+                extra_data['add_dist'].append(cal_add_dist(gt_box_match, pred_box))
+
+        else:
+            # No match. Mark this as a false positive.
+            tp.append(0)
+            fp.append(1)
+            conf.append(pred_box.detection_score)
+
+    # Check if we have any matches. If not, just return a "no predictions" array.
+    if len(match_data['trans_err']) == 0:
+        return DetectionMetricData.no_predictions(), extra_data
+
+    extra_data['1m_1d'] = ((np.array(match_data['trans_err']) <= 1) & (np.array(match_data['orient_err']) <= 5 / 180 * np.pi)).sum() / len(taken)
+    # ---------------------------------------------
+    # Calculate and interpolate precision and recall
+    # ---------------------------------------------
+
+    # Accumulate.
+    tp = np.cumsum(tp).astype(float)
+    fp = np.cumsum(fp).astype(float)
+    conf = np.array(conf)
+
+    # Calculate precision and recall.
+    prec = tp / (fp + tp)
+    rec = tp / float(npos)
+
+    rec_interp = np.linspace(0, 1, DetectionMetricData.nelem)  # 101 steps, from 0% to 100% recall.
+    prec = np.interp(rec_interp, rec, prec, right=0)
+    conf = np.interp(rec_interp, rec, conf, right=0)
+    rec = rec_interp
+
+    # ---------------------------------------------
+    # Re-sample the match-data to match, prec, recall and conf.
+    # ---------------------------------------------
+
+    for key in match_data.keys():
+        if key == "conf":
+            continue  # Confidence is used as reference to align with fp and tp. So skip in this step.
+        
+        else:
+            # For each match_data, we first calculate the accumulated mean.
+            tmp = cummean(np.array(match_data[key]))
+
+            # Then interpolate based on the confidences. (Note reversing since np.interp needs increasing arrays)
+            match_data[key] = np.interp(conf[::-1], match_data['conf'][::-1], tmp[::-1])[::-1]
+
+    # ---------------------------------------------
+    # Done. Instantiate MetricData and return
+    # ---------------------------------------------
+    detection_metric = DetectionMetricData(recall=rec,
+                               precision=prec,
+                               confidence=conf,
+                               trans_err=match_data['trans_err'],
+                               vel_err=match_data['vel_err'],
+                               scale_err=match_data['scale_err'],
+                               orient_err=match_data['orient_err'],
+                               attr_err=match_data['attr_err'])
+    # detection_metric.add_dist = match_data.pop('add_dist')
+
+    return detection_metric, extra_data
+
 
 @DATASETS.register_module()
 class NuScenesDataset(Custom3DDataset):
@@ -534,7 +1052,7 @@ class NuScenesDataset(Custom3DDataset):
             dict: Dictionary of evaluation details.
         """
         from nuscenes import NuScenes
-        from nuscenes.eval.detection.evaluate import NuScenesEval
+        # from nuscenes.eval.detection.evaluate import NuScenesEval
 
         output_dir = osp.join(*osp.split(result_path)[:-1])
         nusc = NuScenes(
@@ -646,7 +1164,10 @@ class NuScenesDataset(Custom3DDataset):
         Returns:
             dict[str, float]: Results of each evaluation metric.
         """
-        result_files, tmp_dir = self.format_results(results, jsonfile_prefix)
+        # result_files, tmp_dir = self.format_results(results, jsonfile_prefix)
+        result_files = {'pts_bbox': '/media/msc-auto/HDD/dataset/nuscenes/SOLOFusion/pred_results/pts_bbox/results_nusc.json'}
+        # result_files = {'pts_bbox': '/media/msc-auto/HDD/dataset/nuscenes/SOLOFusion/pred_results/pts_bbox/nus_results.json'}
+        tmp_dir = None
 
         if isinstance(result_files, dict):
             results_dict = dict()
