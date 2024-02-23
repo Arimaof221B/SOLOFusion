@@ -256,7 +256,7 @@ def _fill_trainval_infos(nusc,
             rots = np.array([b.orientation.yaw_pitch_roll[0]
                              for b in boxes]).reshape(-1, 1)
             velocity = np.array([b.velocity[:2] for b in boxes])
-            valid_flag = np.array([True] * len(boxes))
+            valid_flag = np.array([True] * len(boxes), dtype=bool).reshape(-1)
             # velocity = np.array(
             #     [nusc.box_velocity(token)[:2] for token in sample['anns']])
             # valid_flag = np.array(
