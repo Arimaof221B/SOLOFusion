@@ -240,10 +240,6 @@ class LoadMultiViewImageFromFiles_BEVDet(object):
                                                                                flip=flip,
                                                                                scale=scale)
             
-            print("X" * 50)
-            print(resize)
-            print(resize_dims)
-            print(crop)
             
             img, post_rot2, post_tran2 = self.img_transform(img, post_rot, post_tran,
                                                             resize=resize,

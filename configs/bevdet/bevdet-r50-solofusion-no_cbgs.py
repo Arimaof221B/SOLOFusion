@@ -72,11 +72,11 @@ model = dict(
         in_channels=256,
         tasks=[
             dict(num_class=1, class_names=['car']),
-            dict(num_class=2, class_names=['truck', 'construction_vehicle']),
-            dict(num_class=2, class_names=['bus', 'trailer']),
-            dict(num_class=1, class_names=['barrier']),
-            dict(num_class=2, class_names=['motorcycle', 'bicycle']),
-            dict(num_class=2, class_names=['pedestrian', 'traffic_cone']),
+            # dict(num_class=2, class_names=['truck', 'construction_vehicle']),
+            # dict(num_class=2, class_names=['bus', 'trailer']),
+            # dict(num_class=1, class_names=['barrier']),
+            # dict(num_class=2, class_names=['motorcycle', 'bicycle']),
+            # dict(num_class=2, class_names=['pedestrian', 'traffic_cone']),
         ],
         common_heads=dict(
             reg=(2, 2), height=(1, 2), dim=(3, 2), rot=(2, 2), vel=(2, 2)),
@@ -214,23 +214,23 @@ data = dict(
     samples_per_gpu=8,
     workers_per_gpu=4,
     train=dict(
-        type='CBGSDataset',
-        dataset=dict(
-            type=dataset_type,
-            data_root=data_root,
-            ann_file=data_root + 'nuscenes_split_infos_train.pkl',
-            pipeline=train_pipeline,
-            classes=class_names,
-            test_mode=False,
-            use_valid_flag=True,
-            modality=input_modality,
-            # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
-            # and box_type_3d='Depth' in sunrgbd and scannet dataset.
-            box_type_3d='LiDAR',
-            img_info_prototype='bevdet')),
-    val=dict(pipeline=test_pipeline, classes=class_names, ann_file=data_root + 'nuscenes_split_infos_val.pkl', 
+        type=dataset_type,
+        data_root=data_root,
+        ann_file=data_root + 'nuscenes_solofusion_split_infos_train.pkl',
+        pipeline=train_pipeline,
+        classes=class_names,
+        test_mode=False,
+        use_valid_flag=True,
+        modality=input_modality,
+        # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
+        # and box_type_3d='Depth' in sunrgbd and scannet dataset.
+        box_type_3d='LiDAR',
+        img_info_prototype='bevdet'),
+    val=dict(pipeline=test_pipeline, classes=class_names,
+             ann_file=data_root + 'nuscenes_split_infos_val.pkl',
         modality=input_modality, img_info_prototype='bevdet'),
-    test=dict(pipeline=test_pipeline, classes=class_names, ann_file=data_root + 'nuscenes_split_infos_val.pkl', 
+    test=dict(pipeline=test_pipeline, classes=class_names,
+              ann_file=data_root + 'nuscenes_split_infos_val.pkl',
         modality=input_modality, img_info_prototype='bevdet'))
 
 # Optimizer
@@ -242,4 +242,6 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=0.001,
     step=[16, 22])
-runner = dict(type='EpochBasedRunner', max_epochs=24)
+runner = dict(type='EpochBasedRunner', max_epochs=120)
+evaluation = dict(interval=24, pipeline=eval_pipeline)
+checkpoint_config = dict(interval=12)
