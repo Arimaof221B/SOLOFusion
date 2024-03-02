@@ -239,6 +239,12 @@ class LoadMultiViewImageFromFiles_BEVDet(object):
                                                                                W=img.width,
                                                                                flip=flip,
                                                                                scale=scale)
+            
+            print("X" * 50)
+            print(resize)
+            print(resize_dims)
+            print(crop)
+            
             img, post_rot2, post_tran2 = self.img_transform(img, post_rot, post_tran,
                                                             resize=resize,
                                                             resize_dims=resize_dims,
@@ -678,7 +684,7 @@ class LoadPointsFromFile(object):
                 points = np.load(pts_filename)
             else:
                 points = np.fromfile(pts_filename, dtype=np.float32)
-
+        
         return points
 
     def __call__(self, results):
@@ -729,7 +735,6 @@ class LoadPointsFromFile(object):
         points = points_class(
             points, points_dim=points.shape[-1], attribute_dims=attribute_dims)
         results['points'] = points
-
         return results
 
     def __repr__(self):

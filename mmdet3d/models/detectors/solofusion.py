@@ -459,6 +459,8 @@ class SOLOFusion(BEVDet):
         img_feats, _ = self.extract_img_feat(img, img_metas)
         bbox_pts = self.simple_test_pts(img_feats, img_metas, rescale=rescale)
 
-        bbox_list = [dict(pts_bbox=bbox_pts[0])]
+        print(len(points))
+        print(points[0].shape)
+        bbox_list = [dict(pts_bbox=bbox_pts[0], points=points)]
 
         return bbox_list

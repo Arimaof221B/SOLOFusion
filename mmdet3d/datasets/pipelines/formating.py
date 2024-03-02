@@ -48,7 +48,9 @@ class DefaultFormatBundle(object):
                 imgs = np.ascontiguousarray(np.stack(imgs, axis=0))
                 results['img'] = DC(to_tensor(imgs), stack=True)
             else:
-                img = np.ascontiguousarray(results['img'].transpose(2, 0, 1))
+                # modify
+                # img = np.ascontiguousarray(results['img'].transpose(2, 0, 1))
+                img = results['img']
                 results['img'] = DC(to_tensor(img), stack=True)
         for key in [
                 'proposals', 'gt_bboxes', 'gt_bboxes_ignore', 'gt_labels',
@@ -141,7 +143,7 @@ class Collect3D(object):
                             'transformation_3d_flow', 'cam_sweep_ids',
                             'sequence_group_idx', 'curr_to_prev_lidar_rt',
                             'start_of_sequence', 'index', 'global_to_curr_lidar_rt',
-                            'prev_lidar_to_global_rt', 'sample_index')):
+                            'prev_lidar_to_global_rt')):
         self.keys = keys
         self.meta_keys = meta_keys
 

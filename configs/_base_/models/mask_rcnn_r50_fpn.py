@@ -111,6 +111,9 @@ model = dict(
             debug=False)),
     test_cfg=dict(
         rpn=dict(
+            nms=dict(type='nms', iou_threshold=0.5),
+            max_per_img=100,
+            mask_thr_binary=0.5,
             nms_across_levels=False,
             nms_pre=1000,
             nms_post=1000,

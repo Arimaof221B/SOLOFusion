@@ -1,5 +1,5 @@
 _base_ = [
-    '../_base_/datasets/nuim_instance.py',
+    # '../_base_/datasets/nuim_instance.py',
     '../_base_/schedules/mmdet_schedule_1x.py', '../_base_/default_runtime.py'
 ]
 # model settings
@@ -208,6 +208,9 @@ model = dict(
         ]),
     test_cfg=dict(
         rpn=dict(
+            nms=dict(type='nms', iou_threshold=0.5),
+            max_per_img=100,
+            mask_thr_binary=0.5, 
             nms_across_levels=False,
             nms_pre=1000,
             nms_post=1000,

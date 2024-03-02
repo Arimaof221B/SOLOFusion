@@ -14,7 +14,8 @@ from .transforms_3d import (BackgroundPointsFilter, GlobalAlignment,
                             ObjectRangeFilter, ObjectSample, PointSample,
                             PointShuffle, PointsRangeFilter,
                             RandomDropPointsColor, RandomFlip3D,
-                            RandomJitterPoints, VoxelBasedPointSampler, ExtractImages)
+                            RandomJitterPoints, VoxelBasedPointSampler,
+                            ExtractImages)
 
 __all__ = [
     'ObjectSample', 'RandomFlip3D', 'ObjectNoise', 'GlobalRotScaleTrans',

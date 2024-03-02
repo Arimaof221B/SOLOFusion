@@ -216,23 +216,28 @@ def main():
             broadcast_buffers=False)
         outputs = multi_gpu_test(model, data_loader, args.tmpdir,
                                  args.gpu_collect)
-
+    
     import pickle
     cams = ['CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT',
              'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT']
-    idx = 5
+    idx = 2
+
+    kw_outputs = dict()
+    for i, output in enumerate(outputs):
+        kw_outputs[dataset.data_infos[i]['token']] = output
+
     with open(f'outputs_{cams[idx]}.pkl', 'wb') as f:
-        pickle.dump(outputs, f)
+        pickle.dump(kw_outputs, f)
     # with open(f'outputs_{cams[idx]}.pkl', 'rb') as f:
     #     outputs = pickle.load(f)
-
+    
     rank, _ = get_dist_info()
     if rank == 0:
         if args.out:
             print(f'\nwriting results to {args.out}')
             mmcv.dump(outputs, args.out)
-        # kwargs = {} if args.eval_options is None else args.eval_options
-        kwargs = {'jsonfile_prefix': cams[idx]}
+        kwargs = {} if args.eval_options is None else args.eval_options
+        # kwargs = {'jsonfile_prefix': cams[idx]}
         if args.format_only:
             dataset.format_results(outputs, **kwargs)
         if args.eval:
